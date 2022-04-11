@@ -154,20 +154,31 @@ def comment_device(new_file, start: bool) -> None:
         device_delete_info()
 
 
-def parse_devices(line, new_file, act) -> bool:
+def parse_devices(line, new_file, file, act) -> bool:
     """
     Find devices from list devices
     :param line:  where to find
     :param new_file:  where to write
+    :param file: pcw.dtsi or pl.dtsi
     :param act:  When True end device commenting, try to find device otherwise
     :return:  True when device was found, False otherwise
     """
     # devices to find
-    devices = \
-        [
-            "sdra_axi_ad9361_a",
-            "sdrb_axi_ad9361_b"
-        ]
+    devices = []
+    if file == "pl":
+        devices += \
+            [
+                "sdra_axi_ad9361_a",
+                "sdrb_axi_ad9361_b"
+            ]
+    elif file == "pcw":
+        devices += \
+            [
+                "qspi"
+            ]
+    else:
+        print("{}Unknown file for device-parsing{}\n".format(TtyColors.FAIL, TtyColors.ENDC))
+        exit(1)
 
     end_device_description = r"};"
 
@@ -220,10 +231,10 @@ def parse_fifo(line, new_file, act) -> bool:
     return False
 
 
-def rename_pl_dtsi(name) -> str:
+def rename_file(name) -> str:
     """
-    Rename pl.dtsi to mod_pl.dtsi
-    :param name:  pl.dtsi
+    Add "mod_" before file name
+    :param name:  original file name
     :return:  New string on success, empty string otherwise
     """
     try:
@@ -236,13 +247,13 @@ def rename_pl_dtsi(name) -> str:
         return "/".join(pos)
 
 
-def print_total_info(new_file_name, fifo, devices) -> None:
+def print_total_pl_info(new_file_name, fifo, devices) -> None:
     """
     Print summary information about deleted devices and added data to fifo
-    :param new_file_name:
-    :param fifo:
-    :param devices:
-    :return:
+    :param new_file_name:  new file name
+    :param fifo:  fifo count
+    :param devices:  device count
+    :return: None
     """
     # print info about fifo
     if not fifo:
@@ -257,7 +268,21 @@ def print_total_info(new_file_name, fifo, devices) -> None:
         print("{}Deleted {} device(s){}\n".format(TtyColors.WARNING, devices, TtyColors.ENDC))
 
 
-def parse_file(lines, new_file, new_file_name) -> None:
+def print_total_pcw_info(new_file_name, devices) -> None:
+    """
+    Print summary information about deleted devices
+    :param new_file_name:  new file name
+    :param devices: device count
+    :return: None
+    """
+    # print info about devices
+    if not devices:
+        print("\n{}Didn't find needed devices in file {}{}\n".format(TtyColors.FAIL, new_file_name, TtyColors.ENDC))
+    else:
+        print("\n{}Deleted {} device(s){}\n".format(TtyColors.WARNING, devices, TtyColors.ENDC))
+
+
+def parse_pl_dtsi(lines, new_file, new_file_name) -> None:
     """
     Parse file where delete devices and add data to fifo
     :param lines:  file data
@@ -272,7 +297,7 @@ def parse_file(lines, new_file, new_file_name) -> None:
 
     for line in lines:
         # search for devices-base
-        ret = parse_devices(line, new_file, device_act)
+        ret = parse_devices(line, new_file, "pl", device_act)
         # when device was commented need to avoid writing "};" to new file
         if ret and device_act:
             device_act = False
@@ -300,35 +325,75 @@ def parse_file(lines, new_file, new_file_name) -> None:
     # change mode for file (make it green)
     os.chmod(new_file_name, 0o777)
     # print total info about fifo and devices
-    print_total_info(new_file_name, total_fifo, total_devices)
+    print_total_pl_info(new_file_name, total_fifo, total_devices)
 
 
-def parse_pl_dtsi(work_file) -> None:
+def parse_pcw_dtsi(lines, new_file, new_file_name) -> None:
     """
-    Parse pl.dtsi
-    :param work_file:  name of the file
+    Parse pcw.dtsi
+    :param lines:  file data
+    :param new_file:  where to write data
+    :param new_file_name:  new file name where to save data
+    :return: None
+    """
+    device_act = False
+    total_devices = 0
+
+    for line in lines:
+        # search for devices-base
+        ret = parse_devices(line, new_file, "pcw", device_act)
+        # when device was commented need to avoid writing "};" to new file
+        if ret and device_act:
+            device_act = False
+            continue
+        # device was found
+        if ret:
+            total_devices += 1
+            device_act = True
+
+        # write line to new file
+        new_file.write(line)
+
+    new_file.close()
+    # change mode for file (make it green)
+    os.chmod(new_file_name, 0o777)
+    # print total info about fifo and devices
+    print_total_pcw_info(new_file_name, total_devices)
+
+
+def parse_file(work_file) -> None:
+    """
+    Parse inputted file
+    :param work_file:  file name to parse
     :return:  None
     """
-    # check again if pl.fifo and terminate even with error ignoring
+    # check again if file exist in current directory
     if not os.path.isfile(work_file):
         print("\n{}Can't find file name \"{}\"{}".format(TtyColors.FAIL, work_file, TtyColors.ENDC))
         exit(1)
 
-    # open pl.dtsi file for parsing
+    # open file for parsing
     with open(work_file) as f:
         # read file to tmp array
         lines = f.readlines()
         # create name for new file
-        mod_fifo = rename_pl_dtsi(work_file)
-        # open new_file where to write modified pl.dtsi
+        mod_file = rename_file(work_file)
+        # open new_file where to write modified data
         try:
-            mod_pl = open(mod_fifo, "w")
+            mod_file_fd = open(mod_file, "w")
         except IOError:
             print("\n{}Can't open file \"{}\"{}".format(TtyColors.FAIL, mod_fifo, TtyColors.ENDC))
             exit(1)
 
-        # start parsing file
-        parse_file(lines, mod_pl, work_file)
+        if work_file.find("pcw") != -1:
+            # start parsing pcw.dtsi file
+            parse_pcw_dtsi(lines, mod_file_fd, work_file)
+        elif work_file.find("pl") != -1:
+            # start parsing pl.dtsi file
+            parse_pl_dtsi(lines, mod_file_fd, work_file)
+        else:
+            print("\n{}Unknown file for parsing \"{}\"{}".format(TtyColors.FAIL, mod_fifo, TtyColors.ENDC))
+            exit(1)
 
 
 def process_fpga_files() -> None:
@@ -352,9 +417,15 @@ def process_fpga_files() -> None:
     for f in files:
         exist(f)
 
+    # parse pcw.dtsi and create new file with modified data
+    work_file = files[0]
+    parse_file(work_file)
+    # change pcw.dtsi mode again (after reading mode can be changed by OS)
+    os.chmod(work_file, 0o666)
+
     # parse pl.dtsi and create new file with modified data
     work_file = files[1]
-    parse_pl_dtsi(work_file)
+    parse_file(work_file)
     # change pl.dtsi mode again (after reading mode can be changed by OS)
     os.chmod(work_file, 0o666)
 
